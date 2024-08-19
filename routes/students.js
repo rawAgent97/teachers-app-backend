@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const Student = require("../models/Students");
 const authMiddleware = require("../middleware/auth");
+const StudentDetails = require("../models/StudentDetails");
 
 // Add or update student details
 router.post("/add", authMiddleware, async (req, res) => {
@@ -9,23 +10,34 @@ router.post("/add", authMiddleware, async (req, res) => {
   const userId = req.user.userId; // User ID from JWT payload
     try {
     // Find an existing record with the same name and subject
-    const existingRecord = await Student.findOne({ userId, name, subject });
-
+    const existingRecord = await Student.findOne({ userId, name });
+   
     if (existingRecord) {
       // Update the existing record with new marks
-      existingRecord.marks = marks;
-      await existingRecord.save();
-      res.status(200).send("Student details updated");
+      const studentRecord=await StudentDetails.findOne({userId,name,studentId:existingRecord._id,subject})
+      if (studentRecord){
+        studentRecord.marks = marks;
+        await studentRecord.save();
+        res.status(200).send("Student details updated");
+      }
+      else{
+        const  newStudentDetailsRecord= new StudentDetails({userId,name,studentId:existingRecord._id,marks,subject})
+      await newStudentDetailsRecord.save();
+      res.status(201).send("Student details added");
+      }
+     
     } else {
       // Create a new record if no existing record is found
       const newStudentRecord = new Student({
         userId,
         name,
-        subject,
-        marks,
       });
+      const  newStudentDetailsRecord= new StudentDetails({userId,name,studentId:newStudentRecord._id, marks,subject})
+
+     
 
       await newStudentRecord.save();
+      await newStudentDetailsRecord.save();
       res.status(201).send("Student details added");
     }
   } catch (err) {
@@ -35,19 +47,39 @@ router.post("/add", authMiddleware, async (req, res) => {
 
 router.get("/all", authMiddleware, async (req, res) => {
   const userId = req.user.userId; // User ID from JWT payload
+  const {sort}=req.query;
   try {
     // Find all student records for the given userId
-    const studentRecords = await Student.find({ userId });
+    const studentRecords = await StudentDetails.find({ userId });
 
     if (studentRecords.length === 0) {
       return res.status(404).send("No records found for this user");
     }
 
-    res.json(studentRecords);
+    if (studentRecords.length>0 && sort){
+      if (sort=="asc"){
+        const sortedRecords = await StudentDetails.find({ userId }).sort({ ["marks"]: 1 });
+        res.json(sortedRecords)
+      }
+      else{
+        const sortedRecords = await StudentDetails.find({ userId }).sort({ ["marks"]: -1 });
+        res.json(sortedRecords)
+      }
+      
+    }
+    else{
+      res.json(studentRecords);
+    }
+
+    
   } catch (err) {
     res.status(500).send("Error retrieving student records");
   }
 });
+
+
+
+
 
 router.put("/update/:id", authMiddleware, async (req, res) => {
   const { id } = req.params; // Student ID from URL params
@@ -59,27 +91,42 @@ router.put("/update/:id", authMiddleware, async (req, res) => {
   }
 
   try {
-    const existingRecords = await Student.find({ userId, name, subject });
-    const studentRecord = await Student.findById(id);
-    if (
-      existingRecords.length > 1 ||
-      (existingRecords.length == 1 &&
-        existingRecords[0]._id.toHexString() !==
-          studentRecord._id.toHexString())
-    ) {
+    const studentRecord= await StudentDetails.findById(id)
+    const existingRecords= await StudentDetails.find({userId,name,subject})
+    if (existingRecords.length>1 || ( existingRecords.length == 1 && studentRecord._id.toHexString() !== existingRecords[0]._id.toHexString() )){
       return res.status(400).send("Record with same details already exists.");
-    } else {
-      if (studentRecord) {
-        // Update the record
-        studentRecord.name = name;
+    }
+    else if (existingRecords.length == 1 && studentRecord._id.toHexString() === existingRecords[0]._id.toHexString()){
+      studentRecord.subject = subject;
+          studentRecord.marks = marks;
+       await studentRecord.save();
+       res.status(200).send("Student details updated");
+    }
+    else{
+      const studentRecordWithSameName=await StudentDetails.findOne({userId, name})
+      if (studentRecordWithSameName){
+        studentRecord.studentId=studentRecordWithSameName.studentId
+        studentRecord.name=name
         studentRecord.subject = subject;
         studentRecord.marks = marks;
-        await studentRecord.save();
+     await studentRecord.save();
+     res.status(200).send("Student details updated");
+      }else{
+    const newStudentRecord = new Student({
+      userId,
+      name,
+    });
+    studentRecord.studentId=newStudentRecord._id
+        studentRecord.name=name
+        studentRecord.subject = subject;
+        studentRecord.marks = marks;
+    await newStudentRecord.save();
+    await studentRecord.save()
+    res.status(200).send("Student details updated");
 
-        res.status(200).send("Student details updated");
       }
+     
     }
-    // Find the record by ID and ensure it belongs to the user
   } catch (err) {
     res.status(500).send("Error updating student details");
   }
@@ -91,7 +138,7 @@ router.delete("/delete/:id", authMiddleware, async (req, res) => {
 
   try {
     // Find and delete the student by ID and userId
-    const student = await Student.findByIdAndDelete({ _id: id, userId });
+    const student = await StudentDetails.findByIdAndDelete({ _id: id, userId });
 
     if (!student) {
       return res.status(404).send("Student not found");
